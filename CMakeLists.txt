@@ -41,7 +41,7 @@ add_library(vector3d SHARED src/linux-mpu9150/mpu9150/vector3d.c)
 add_library(quaternion SHARED src/linux-mpu9150/mpu9150/quaternion.c)
 add_library(inv_mpu SHARED src/linux-mpu9150/eMPL/inv_mpu.c)
 add_library(inv_mpu_dmp_motion_driver SHARED src/linux-mpu9150/eMPL/inv_mpu_dmp_motion_driver.c)
-target_link_libraries(mpu9150_node linux_glue mpu9150 inv_mpu quaternion inv_mpu_dmp_motion_driver vector3d ${catkin_LIBRARIES})
+target_link_libraries(linux_glue mpu9150_node mpu9150 inv_mpu quaternion inv_mpu_dmp_motion_driver vector3d ${catkin_LIBRARIES})
 #target_link_libraries(mpu9150_node ${catkin_LIBRARIES})
 
 # imu utility
