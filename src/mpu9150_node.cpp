@@ -3,11 +3,13 @@
  *
  *       Filename:  mpu9150_node.cpp
  *
- *    Description: ROS package that launches a node and publishes the Invensense MPU-9150 to a Topic  
+ *    Description: ROS package that launches a node and publishes
+ *	  the Invensense MPU-9150 in the format Imu.msgs and MagneticField.msgs to the topics
+ *    /imu/data_raw and /imu/mag
  *
- *        Version:  1.0
+ *        Version:  1.1
  *        Created:  27/07/13 15:06:50
- *       Revision:  none
+ *       Revision:  Morgan Dykshorn <mdd27@vt.edu>
  *
  *         Author:  Víctor Mayoral Vilches <v.mayoralv@gmail.com>
  *
@@ -15,6 +17,11 @@
  */
 #include "ros/ros.h"
 #include "std_msgs/String.h"
+//include IMU message, geometry message quaternion, geometry message vector3, and magnetic field
+#include "sensor_msgs/Imu.h"
+#include "geometry_msgs/Quaternion.h"
+#include "geometry_msgs/Vector3.h"
+#include "sensor_msgs/MagneticField.h"
 #include <sstream>
 
 #include <stdio.h>
@@ -37,43 +44,22 @@
     }
 #endif
 
-
+//calibration function
 int set_cal(int mag, char *cal_file);
-void read_loop(unsigned int sample_rate);
-void print_fused_euler_angles(mpudata_t *mpu);
-void print_fused_quaternion(mpudata_t *mpu);
-void print_calibrated_accel(mpudata_t *mpu);
-void print_calibrated_mag(mpudata_t *mpu);
+//
 void register_sig_handler();
 void sigint_handler(int sig);
 
 int done;
 
-void usage(char *argv_0)
-{
-    printf("\nUsage: %s [options]\n", argv_0);
-    printf("  -b <i2c-bus>          The I2C bus number where the IMU is. The default is 1 to use /dev/i2c-1.\n");
-    printf("  -s <sample-rate>      The IMU sample rate in Hz. Range 2-50, default 10.\n");
-    printf("  -y <yaw-mix-factor>   Effect of mag yaw on fused yaw data.\n");
-    printf("                           0 = gyro only\n");
-    printf("                           1 = mag only\n");
-    printf("                           > 1 scaled mag adjustment of gyro data\n");
-    printf("                           The default is 4.\n");
-    printf("  -a <accelcal file>    Path to accelerometer calibration file. Default is ./accelcal.txt\n");
-    printf("  -m <magcal file>      Path to mag calibration file. Default is ./magcal.txt\n");
-    printf("  -v                    Verbose messages\n");
-    printf("  -h                    Show this help\n");
-
-    printf("\nExample: %s -b3 -s20 -y10\n\n", argv_0);
-
-    exit(1);
-}
-
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "mpu9150_node");
   ros::NodeHandle n;
-  ros::Publisher chatter_pub = n.advertise<std_msgs::String>("imu_euler", 1000);
+  //creates publisher of IMU message
+  ros::Publisher pub = n.advertise<sensor_msgs::Imu>("imu/data_raw", 1000);
+  //creates publisher of Magnetic FIeld message
+  ros::Publisher pubM = n.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
   ros::Rate loop_rate(10);
 
   /* Init the sensor the values are hardcoded at the local_defaults.h file */
@@ -84,85 +70,9 @@ int main(int argc, char **argv)
 	int verbose = 0;
 	char *mag_cal_file = NULL;
 	char *accel_cal_file = NULL;
-	unsigned long loop_delay;
+	//creates object of mpudata_t
 	mpudata_t mpu;
 
-    // receive the parameters and process them
-    while ((opt = getopt(argc, argv, "b:s:y:a:m:vh")) != -1) {
-        switch (opt) {
-        case 'b':
-            i2c_bus = strtoul(optarg, NULL, 0);
-
-            if (errno == EINVAL)
-                usage(argv[0]);
-
-            if (i2c_bus < MIN_I2C_BUS || i2c_bus > MAX_I2C_BUS)
-                usage(argv[0]);
-
-            break;
-
-        case 's':
-            sample_rate = strtoul(optarg, NULL, 0);
-
-            if (errno == EINVAL){
-                printf("EINVAL\n");
-                usage(argv[0]);
-            }
-
-            if (sample_rate < MIN_SAMPLE_RATE || sample_rate > MAX_SAMPLE_RATE){
-                printf("sample rate problem\n");
-                usage(argv[0]);
-            }
-
-            break;
-
-        case 'y':
-            yaw_mix_factor = strtoul(optarg, NULL, 0);
-
-            if (errno == EINVAL)
-                usage(argv[0]);
-
-            if (yaw_mix_factor < 0 || yaw_mix_factor > 100)
-                usage(argv[0]);
-
-            break;
-
-        case 'a':
-            len = 1 + strlen(optarg);
-
-            accel_cal_file = (char *)malloc(len);
-
-            if (!accel_cal_file) {
-                perror("malloc");
-                exit(1);
-            }
-
-            strcpy(accel_cal_file, optarg);
-            break;
-
-        case 'm':
-            len = 1 + strlen(optarg);
-
-            mag_cal_file = (char *)malloc(len);
-
-            if (!mag_cal_file) {
-                perror("malloc");
-                exit(1);
-            }
-
-            strcpy(mag_cal_file, optarg);
-            break;
-
-        case 'v':
-            verbose = 1;
-            break;
-
-        case 'h':
-        default:
-            usage(argv[0]);
-            break;
-        }
-    }
 
     // Initialize the MPU-9150
 	register_sig_handler();
@@ -175,14 +85,9 @@ int main(int argc, char **argv)
 		free(accel_cal_file);
 	if (mag_cal_file)
 		free(mag_cal_file);
-	memset(&mpu, 0, sizeof(mpudata_t));
+
 	if (sample_rate == 0)
 		return -1;
-
-    // ROS loop config
-	loop_delay = (1000 / sample_rate) - 2;
-	printf("\nEntering MPU read loop (ctrl-c to exit)\n\n");
-	linux_delay_ms(loop_delay);
 
   /**
    * A count of how many messages we have sent. This is used to create
@@ -191,72 +96,66 @@ int main(int argc, char **argv)
   int count = 0;
   while (ros::ok())
   {
-    std_msgs::String msg;
-    std::stringstream ss;
+  	//creates objects of each message type
+  	//IMU Message
+    sensor_msgs::Imu msgIMU;
+    std_msgs::String header;
+    geometry_msgs::Quaternion orientation;
+    geometry_msgs::Vector3 angular_velocity;
+    geometry_msgs::Vector3 linear_acceleration;
+    //magnetometer message
+    sensor_msgs::MagneticField msgMAG;
+    geometry_msgs::Vector3 magnetic_field;
 
+//modified to output in the format of IMU message
 	if (mpu9150_read(&mpu) == 0) {
-		//print_fused_euler_angles(&mpu);
-	    //ss << "\rX: %0.0f Y: %0.0f Z: %0.0f        ",
-	    ss << "\rX: " << mpu.fusedEuler[VEC3_X] * RAD_TO_DEGREE <<
-            " Y: " << mpu.fusedEuler[VEC3_Y] * RAD_TO_DEGREE <<
-			" Z: " << mpu.fusedEuler[VEC3_Z] * RAD_TO_DEGREE << count;
+		//IMU Message
+		//sets up header for IMU message
+		msgIMU.header.seq = count;
+		msgIMU.header.stamp.sec = ros::Time::now().toSec();
+		msgIMU.header.frame_id = "/base_link";
+		//adds data to the sensor message
+		//orientation
+		msgIMU.orientation.x = mpu.fusedQuat[QUAT_X];
+		msgIMU.orientation.y = mpu.fusedQuat[QUAT_Y];
+		msgIMU.orientation.z = mpu.fusedQuat[QUAT_Z];
+		msgIMU.orientation.w = mpu.fusedQuat[QUAT_W];
+		//msgIMU.orientation_covariance[0] = 
+		//angular velocity
+		msgIMU.angular_velocity.x = mpu.fusedEuler[VEC3_X] * RAD_TO_DEGREE;
+		msgIMU.angular_velocity.y = mpu.fusedEuler[VEC3_Y] * RAD_TO_DEGREE;
+		msgIMU.angular_velocity.z = mpu.fusedEuler[VEC3_Z] * RAD_TO_DEGREE;
+		//msgIMU.angular_velocity_covariance[] = 
+		//linear acceleration
+		msgIMU.linear_acceleration.x = mpu.calibratedAccel[VEC3_X];
+		msgIMU.linear_acceleration.y = mpu.calibratedAccel[VEC3_Y];
+		msgIMU.linear_acceleration.z = mpu.calibratedAccel[VEC3_Z];
+		//msgIMU.linear_acceleration_covariance[] = 
 
-		// printf_fused_quaternions(&mpu);
-	    // print_calibrated_accel(&mpu);
-	    // print_calibrated_mag(&mpu);
-
-       msg.data = ss.str();
-       ROS_INFO("ROS_INFO: %s\n", msg.data.c_str());
+		//Magnetometer Message
+		//sets up header
+		msgMAG.header.seq = count;
+		msgMAG.header.stamp.sec = ros::Time::now().toSec();
+		msgMAG.header.frame_id = "/base_link";
+		//adds data to magnetic field message
+		msgMAG.magnetic_field.x = mpu.calibratedMag[VEC3_X];
+		msgMAG.magnetic_field.y = mpu.calibratedMag[VEC3_Y];
+		msgMAG.magnetic_field.z = mpu.calibratedMag[VEC3_Z];
+		//fills the list with zeros as per message spec when no covariance is known
+		//msgMAG.magnetic_field_covariance[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 	}
-//	linux_delay_ms(loop_delay);
-    chatter_pub.publish(msg);
+
+	//publish both messages
+    pub.publish(msgIMU);
+    pubM.publish(msgMAG);
     ros::spinOnce();
     loop_rate.sleep();
     ++count;
   }
+  mpu9150_exit();
   return 0;
 }
 
-void print_fused_euler_angles(mpudata_t *mpu)
-{
-	printf("\rX: %0.0f Y: %0.0f Z: %0.0f        ",
-			mpu->fusedEuler[VEC3_X] * RAD_TO_DEGREE, 
-			mpu->fusedEuler[VEC3_Y] * RAD_TO_DEGREE, 
-			mpu->fusedEuler[VEC3_Z] * RAD_TO_DEGREE);
-
-	fflush(stdout);
-}
-
-void print_fused_quaternions(mpudata_t *mpu)
-{
-	printf("\rW: %0.2f X: %0.2f Y: %0.2f Z: %0.2f        ",
-			mpu->fusedQuat[QUAT_W],
-			mpu->fusedQuat[QUAT_X],
-			mpu->fusedQuat[QUAT_Y],
-			mpu->fusedQuat[QUAT_Z]);
-
-	fflush(stdout);
-}
-
-void print_calibrated_accel(mpudata_t *mpu)
-{
-	printf("\rX: %05d Y: %05d Z: %05d        ",
-			mpu->calibratedAccel[VEC3_X], 
-			mpu->calibratedAccel[VEC3_Y], 
-			mpu->calibratedAccel[VEC3_Z]);
-
-	fflush(stdout);
-}
-
-void print_calibrated_mag(mpudata_t *mpu)
-{
-	printf("\rX: %03d Y: %03d Z: %03d        ",
-			mpu->calibratedMag[VEC3_X], 
-			mpu->calibratedMag[VEC3_Y], 
-			mpu->calibratedMag[VEC3_Z]);
-
-	fflush(stdout);
-}
 
 int set_cal(int mag, char *cal_file)
 {
