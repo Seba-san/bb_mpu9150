@@ -71,6 +71,7 @@ int main(int argc, char **argv)
 	int verbose = 0;
 	char *mag_cal_file = NULL;
 	char *accel_cal_file = NULL;
+	unsigned long loop_delay;
 	//creates object of mpudata_t
 	mpudata_t mpu;
 
